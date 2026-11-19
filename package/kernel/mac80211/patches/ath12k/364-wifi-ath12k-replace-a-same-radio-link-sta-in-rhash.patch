@@ -1,0 +1,29 @@
+From: Zakk <zakk@gentoozh.org>
+Date: Thu, 19 Nov 2026 20:40:00 +1100
+Subject: [PATCH] wifi: ath12k: replace a same-radio link sta in rhash
+
+The link sta table is keyed by address per device. A client that
+authenticates on a second vif of the same radio, while hostapd still
+holds it on the first, failed station add with -EEXIST until the old
+entry timed out, because only an entry of another radio was replaced.
+Replace the existing entry whatever its radio.
+
+Signed-off-by: Zakk <zakk@gentoozh.org>
+---
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -7253,11 +7253,12 @@ static int ath12k_mac_station_add(struct
+ 	/*
+ 	 * In case of Split PHY and roaming scenario, pdev idx
+ 	 * might differ but both the pdev will share same rhash
+-	 * table. In that case update the rhash table if link_sta is
++	 * table. A client may also move to another vif of the same
++	 * radio. In both cases update the rhash table if link_sta is
+ 	 * already present
+ 	 */
+ 	temp_arsta = ath12k_link_sta_find_by_addr(ab, arsta->addr);
+-	if (temp_arsta && temp_arsta->arvif->ar != ar)
++	if (temp_arsta)
+ 		ath12k_link_sta_rhash_delete(ab, temp_arsta);
+ 
+ 	ret = ath12k_link_sta_rhash_add(ab, arsta);
