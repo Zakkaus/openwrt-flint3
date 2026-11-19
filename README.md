@@ -1,6 +1,6 @@
 # OpenWrt for the GL.iNet Flint 3 (GL-BE9300)
 
-<a href="https://ko-fi.com/C8Y320ZTT2"><img src="https://storage.ko-fi.com/cdn/kofi6.png?v=6" height="36" alt="Buy Me a Coffee at ko-fi.com"></a>
+Fork of [perceival/openwrt-flint3](https://github.com/perceival/openwrt-flint3) with our fixes on the `flint3` branch.
 
 Mainline **OpenWrt** support for the **GL.iNet Flint 3 (GL-BE9300)** — Qualcomm
 **IPQ5332** (quad Cortex-A53) with tri-band Wi-Fi 7, a Realtek **RTL8372N** 10G
