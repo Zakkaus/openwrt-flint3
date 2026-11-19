@@ -1,0 +1,23 @@
+#!/bin/sh
+# Send multicast to the stations of every AP as unicast: mDNS answers then reach
+# 5 GHz clients reliably. An explicit 0 is kept. A fresh install has no AP
+# sections before the radios register, so try again on the next boot.
+. /lib/functions.sh
+
+[ "$(board_name)" = "gl.inet,gl-be9300" ] || exit 0
+
+found=
+set_mcast_to_ucast() {
+	local mode
+
+	config_get mode "$1" mode
+	[ "$mode" = ap ] || return 0
+	found=1
+	uci -q get "wireless.$1.multicast_to_unicast_all" >/dev/null ||
+		uci set "wireless.$1.multicast_to_unicast_all=1"
+}
+
+config_load wireless
+config_foreach set_mcast_to_ucast wifi-iface
+[ -n "$found" ] || exit 1
+uci commit wireless
