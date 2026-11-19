@@ -1,0 +1,49 @@
+#!/bin/sh /etc/rc.common
+# Spread the Ethernet and Wi-Fi interrupts over the cores: the GICv2 sends an
+# interrupt with the default mask (f) to CPU0 only. EDMA rings take their driver
+# hint, AHB ath12k rings one CPU each, QCN9274 MSI vectors round-robin from CPU1.
+
+START=95
+
+pin() {
+	printf "%x\n" $((1 << $2)) > "/proc/irq/$1/smp_affinity" 2>/dev/null ||
+		logger -t irq-affinity "IRQ $1 ($3): cannot pin to CPU $2"
+}
+
+start() {
+	local ncpu irq name hint n=0
+
+	case "$(board_name)" in
+	gl.inet,gl-be9300) ;;
+	*) return 0 ;;
+	esac
+
+	ncpu=$(grep -c ^processor /proc/cpuinfo)
+	[ "$ncpu" -gt 1 ] || return 0
+
+	grep -E '^ *[0-9]+:' /proc/interrupts | while read -r irq line; do
+		irq=${irq%:}
+		name=${line##* }
+		case "$line" in
+		*PCI-MSI-*)
+			case "$name" in
+			DP_EXT_IRQ|ce[0-9]*) ;;
+			*) continue ;;
+			esac
+			pin "$irq" $((1 + n % (ncpu - 1))) "$name"
+			n=$((n + 1))
+			;;
+		*" rxdesc_"*|*" txcmpl_"*)
+			[ -r "/proc/irq/$irq/affinity_hint" ] || continue
+			hint=$(cat "/proc/irq/$irq/affinity_hint")
+			[ -n "$hint" ] || continue
+			hint=$((0x$hint))
+			[ "$hint" -gt 0 ] && [ $((hint & (hint - 1))) -eq 0 ] &&
+				printf "%x\n" "$hint" > "/proc/irq/$irq/smp_affinity"
+			;;
+		*-ring[0-9])
+			pin "$irq" $(((${name##*ring} - 1) % ncpu)) "$name"
+			;;
+		esac
+	done
+}
