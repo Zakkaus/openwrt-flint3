@@ -20,7 +20,7 @@ Signed-off-by: JiaY-shi <shi05275@163.com>
 
 --- a/drivers/net/wireless/ath/ath12k/ahb.c
 +++ b/drivers/net/wireless/ath/ath12k/ahb.c
-@@ -11,10 +11,13 @@
+@@ -11,19 +11,24 @@
  #include <linux/platform_device.h>
  #include <linux/remoteproc.h>
  #include <linux/soc/qcom/mdt_loader.h>
@@ -34,7 +34,8 @@ Signed-off-by: JiaY-shi <shi05275@163.com>
 +#define ATH12K_USERPD_SMEM_HOST			1
 +#define ATH12K_USERPD_CRASH_REASON_SMEM_ID	421
  #define ATH12K_MAX_UPDS 1
-@@ -23,7 +26,9 @@
+ #define ATH12K_UPD_IRQ_WRD_LEN  18
+ 
  static struct ath12k_ahb_driver *ath12k_ahb_family_drivers[ATH12K_DEVICE_FAMILY_MAX];
  static const char ath12k_userpd_irq[][9] = {"spawn",
  				     "ready",
@@ -45,7 +46,7 @@ Signed-off-by: JiaY-shi <shi05275@163.com>
  
  static const char *irq_name[ATH12K_IRQ_NUM_MAX] = {
  	"misc-pulse1",
-@@ -587,6 +591,7 @@ static int ath12k_ahb_power_up(struct at
+@@ -483,6 +488,7 @@ static int ath12k_ahb_power_up(struct at
  	}
  
  	ab_ahb->rootpd_crashed = false;
@@ -53,7 +54,7 @@ Signed-off-by: JiaY-shi <shi05275@163.com>
  	ath12k_dbg(ab, ATH12K_DBG_AHB, "UserPD%d is now UP\n", ab_ahb->userpd_id);
  
  err_fw2:
-@@ -609,15 +614,18 @@ static void ath12k_ahb_power_down(struct
+@@ -505,15 +511,18 @@ static void ath12k_ahb_power_down(struct
  	if (ab_ahb->rootpd_crashed)
  		return;
  
@@ -81,7 +82,7 @@ Signed-off-by: JiaY-shi <shi05275@163.com>
  	}
  
  	qcom_smem_state_update_bits(ab_ahb->stop_state, BIT(ab_ahb->stop_bit), 0);
-@@ -858,6 +866,38 @@ static const struct ath12k_hif_ops ath12
+@@ -754,6 +763,38 @@ static const struct ath12k_hif_ops ath12
  	.power_down = ath12k_ahb_power_down,
  };
  
@@ -120,7 +121,7 @@ Signed-off-by: JiaY-shi <shi05275@163.com>
  static irqreturn_t ath12k_userpd_irq_handler(int irq, void *data)
  {
  	struct ath12k_base *ab = data;
-@@ -869,6 +909,8 @@ static irqreturn_t ath12k_userpd_irq_han
+@@ -765,6 +806,8 @@ static irqreturn_t ath12k_userpd_irq_han
  		complete(&ab_ahb->userpd_ready);
  	} else if (irq == ab_ahb->userpd_irq_num[ATH12K_USERPD_STOP_ACK_IRQ])	{
  		complete(&ab_ahb->userpd_stopped);
@@ -147,5 +148,3 @@ Signed-off-by: JiaY-shi <shi05275@163.com>
  };
  
  struct ath12k_ahb_driver {
--- 
-2.51.0

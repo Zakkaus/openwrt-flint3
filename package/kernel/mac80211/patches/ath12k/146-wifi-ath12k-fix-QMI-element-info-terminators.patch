@@ -24,7 +24,7 @@ diff --git a/drivers/net/wireless/ath/ath12k/qmi.c b/drivers/net/wireless/ath/at
 index fd762b5d7bb5..c176cc150f64 100644
 --- a/drivers/net/wireless/ath/ath12k/qmi.c
 +++ b/drivers/net/wireless/ath/ath12k/qmi.c
-@@ -1772,7 +1772,8 @@ static const struct qmi_elem_info qmi_wlanfw_shadow_reg_cfg_s_v01_ei[] = {
+@@ -1772,7 +1772,8 @@ static const struct qmi_elem_info qmi_wl
  	},
  	{
  		.data_type	= QMI_EOTI,
@@ -34,9 +34,7 @@ index fd762b5d7bb5..c176cc150f64 100644
  	},
  };
  
-@@ -2003,15 +2004,17 @@ static const struct qmi_elem_info qmi_wlanfw_wlan_cfg_resp_msg_v01_ei[] = {
- 
- static const struct qmi_elem_info qmi_wlanfw_mem_ready_ind_msg_v01_ei[] = {
+@@ -2005,6 +2006,7 @@ static const struct qmi_elem_info qmi_wl
  	{
  		.data_type = QMI_EOTI,
  		.array_type = NO_ARRAY,
@@ -44,7 +42,7 @@ index fd762b5d7bb5..c176cc150f64 100644
  	},
  };
  
- static const struct qmi_elem_info qmi_wlanfw_fw_ready_ind_msg_v01_ei[] = {
+@@ -2012,6 +2014,7 @@ static const struct qmi_elem_info qmi_wl
  	{
  		.data_type = QMI_EOTI,
  		.array_type = NO_ARRAY,
@@ -52,5 +50,3 @@ index fd762b5d7bb5..c176cc150f64 100644
  	},
  };
  
--- 
-2.53.0
