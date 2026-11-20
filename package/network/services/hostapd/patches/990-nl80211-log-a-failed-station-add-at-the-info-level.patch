@@ -1,0 +1,32 @@
+From: Zakk <zakk@gentoozh.org>
+Date: Sat, 21 Nov 2026 12:00:00 +0800
+Subject: [PATCH] nl80211: log a failed station add at the info level
+
+Local patch for diagnosing the AP MLD "Could not add STA to kernel
+driver" loop: ap_sta_re_add() and add_associated_sta() log that line at
+the info level, but the kernel error behind it was printed only at the
+debug level, and running hostapd at debug floods the persistent syslog.
+
+Print the command (NEW_STATION, SET_STATION, ADD_LINK_STA or
+MODIFY_LINK_STA), the station address, the link ID (-1 when the request
+names no link) and the error at the info level instead. -EEXIST stays at
+the debug level, because the function treats it as success. Logging
+only, no change in behaviour.
+
+Signed-off-by: Zakk <zakk@gentoozh.org>
+---
+--- a/src/drivers/driver_nl80211.c
++++ b/src/drivers/driver_nl80211.c
+@@ -6751,8 +6751,10 @@ static int wpa_driver_nl80211_sta_add(vo
+ 	ret = send_and_recv_cmd(drv, msg);
+ 	msg = NULL;
+ 	if (ret)
+-		wpa_printf(MSG_DEBUG, "nl80211: %s result: %d (%s)",
+-			   cmd_string, ret, strerror(-ret));
++		wpa_printf(ret == -EEXIST ? MSG_DEBUG : MSG_INFO,
++			   "nl80211: %s STA " MACSTR " link_id=%d result: %d (%s)",
++			   cmd_string, MAC2STR(params->addr),
++			   params->mld_link_id, ret, strerror(-ret));
+ 	if (ret == -EEXIST)
+ 		ret = 0;
+ fail:
