@@ -1,5 +1,7 @@
 # OpenWrt for the GL.iNet Flint 3 (GL-BE9300)
 
+[繁體中文](README.zh-TW.md)
+
 Fork of [perceival/openwrt-flint3](https://github.com/perceival/openwrt-flint3). The `flint3` branch is
 OpenWrt main with this port and our fixes, synced by merging OpenWrt main. The GitHub Actions
 workflows that come with OpenWrt main are disabled here: they build the generic targets, not this
@@ -117,17 +119,25 @@ Images land in `bin/targets/qualcommbe/ipq53xx/`.
 
 ### Don't want to build from source?
 
-Pre-built reference images are published periodically on the
-**[Releases page](https://github.com/perceival/openwrt-flint3/releases)**, in three flavours:
+Each release on the **[Releases page](https://github.com/Zakkaus/openwrt-flint3/releases)** is
+one router build, made from `configs/router.config` in this fork with LuCI included. It ships
+the factory and sysupgrade images and a `sha256sums` file.
 
-- **`vanilla`** — the exact, unmodified default this tree produces with zero customization
-  (no LuCI, `wpad-basic-mbedtls`) — what you'd get building it yourself with no changes
-- **`ap`** — full config (LuCI, tri-band MLO) plus the FT-over-MLO roaming series; what the
-  maintainer's own household runs
-- **`router`** — gateway role: LuCI, WireGuard, unbound, chrony, mDNS reflection; nftables
-  flowtable offload in software by default, PPE hardware offload opt-in (see Status)
+The latest is `flint3-20261120-2`, built from fork commit `df5e099e03`, before the OpenWrt
+main merge.
 
-See the disclaimer above before flashing any of them.
+Signed apk package feeds, kernel modules included, match the release image:
+**https://zakkaus.github.io/flint3-packages/openwrt/** for this fork and
+**https://zakkaus.github.io/flint3-packages/immortalwrt/** for the ImmortalWrt fork. Kernel
+modules install only on the image of the same build, so upgrade the router to that image
+first. The LuCI Traditional Chinese translations (`luci-i18n-*-zh-tw`) are in the feed, not
+in the image.
+
+The `vanilla`, `ap` and `router` flavours published upstream by
+[perceival/openwrt-flint3](https://github.com/perceival/openwrt-flint3) are not published
+here.
+
+See the disclaimer above before flashing.
 
 ## Installing
 
