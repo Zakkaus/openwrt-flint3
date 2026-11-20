@@ -1,12 +1,15 @@
 # OpenWrt for the GL.iNet Flint 3 (GL-BE9300)
 
-Fork of [perceival/openwrt-flint3](https://github.com/perceival/openwrt-flint3) with our fixes on the `flint3` branch.
+Fork of [perceival/openwrt-flint3](https://github.com/perceival/openwrt-flint3). The `flint3` branch is
+OpenWrt main with this port and our fixes, synced by merging OpenWrt main. The GitHub Actions
+workflows that come with OpenWrt main are disabled here: they build the generic targets, not this
+device.
 
 Mainline **OpenWrt** support for the **GL.iNet Flint 3 (GL-BE9300)** — Qualcomm
 **IPQ5332** (quad Cortex-A53) with tri-band Wi-Fi 7, a Realtek **RTL8372N** 10G
 switch and a **RTL8221B** 2.5G WAN PHY.
 
-> **This branch (`flint3-be9300`) is a complete, buildable OpenWrt tree.**
+> **This branch (`flint3`) is a complete, buildable OpenWrt tree.**
 > Clone it and build — there is nothing to drop into another checkout.
 > (An earlier `main` branch held a target *overlay*; it is retired and
 > preserved at the tag `archive/main-overlay`.)
@@ -100,7 +103,7 @@ used again. Please report the result in the issue tracker.
 ## Building
 
 ```sh
-git clone -b flint3-be9300 https://github.com/perceival/openwrt-flint3.git
+git clone -b flint3 https://github.com/Zakkaus/openwrt-flint3.git
 cd openwrt-flint3
 ./scripts/feeds update -a
 ./scripts/feeds install -a
