@@ -75,7 +75,7 @@ Signed-off-by: JiaY-shi <shi05275@163.com>
  static int wcss_sec_start(struct rproc *rproc)
  {
  	struct wcss_sec *wcss = rproc->priv;
-@@ -107,12 +134,121 @@ static void *wcss_sec_da_to_va(struct rp
+@@ -107,13 +134,122 @@ static void *wcss_sec_da_to_va(struct rp
  	return wcss->mem_region + offset;
  }
  
@@ -186,7 +186,8 @@ Signed-off-by: JiaY-shi <shi05275@163.com>
  {
  	struct wcss_sec *wcss = rproc->priv;
  	struct device *dev = wcss->dev;
- 	int ret;
+ 	const struct firmware *fw_hdl;
+ 	int i, ret;
  
 +	ret = wcss_sec_prepare_userpd_bootargs(rproc);
 +	if (ret) {
