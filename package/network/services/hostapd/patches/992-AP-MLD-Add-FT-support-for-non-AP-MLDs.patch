@@ -29,7 +29,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
 ---
 --- a/src/ap/ieee802_11_eht.c
 +++ b/src/ap/ieee802_11_eht.c
-@@ -1105,8 +1105,12 @@
+@@ -1170,8 +1170,12 @@ static const u8 * auth_skip_fixed_fields
  
  		return pos;
  #endif /* CONFIG_SAE */
@@ -45,10 +45,10 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  	case WLAN_AUTH_FILS_PK:
 --- a/src/ap/ieee802_11.c
 +++ b/src/ap/ieee802_11.c
-@@ -552,11 +552,14 @@
- 	struct sta_info *sta;
- 	int reply_res;
+@@ -591,11 +591,14 @@ static void handle_auth_ft_finish(void *
  
+ 	connect_refused_notify(hapd, dst, status, HOSTAPD_UBUS_RSN_ERROR_AUTH,
+ 			       NULL, 0);
 -	reply_res = send_auth_reply(hapd, NULL, dst, WLAN_AUTH_FT,
 +	/* Look up the STA first so that the Basic Multi-Link element gets
 +	 * added to the reply for a non-AP MLD. */
@@ -62,7 +62,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  	if (sta == NULL)
  		return;
  
-@@ -4576,6 +4579,20 @@
+@@ -4882,6 +4885,20 @@ static void handle_auth(struct hostapd_d
  			resp = WLAN_STATUS_UNSPECIFIED_FAILURE;
  			goto fail;
  		}
@@ -85,7 +85,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  				    len - IEEE80211_HDRLEN -
 --- a/src/ap/wpa_auth.c
 +++ b/src/ap/wpa_auth.c
-@@ -91,7 +91,7 @@
+@@ -87,7 +87,7 @@ static const int dot11RSNAConfigPMKReaut
  static const int dot11RSNAConfigSATimeout = 60;
  
  
@@ -94,7 +94,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  {
  #ifdef CONFIG_IEEE80211BE
  	if (sm->mld_assoc_link_id >= 0)
-@@ -101,7 +101,7 @@
+@@ -97,7 +97,7 @@ static const u8 * wpa_auth_get_aa(const
  }
  
  
@@ -105,7 +105,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  	if (sm->mld_assoc_link_id >= 0)
 --- a/src/ap/wpa_auth_i.h
 +++ b/src/ap/wpa_auth_i.h
-@@ -357,4 +357,9 @@
+@@ -358,4 +358,9 @@ int wpa_ft_store_pmk_fils(struct wpa_sta
  			  const u8 *pmk_r0_name);
  #endif /* CONFIG_IEEE80211R_AP */
  
@@ -117,7 +117,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  #endif /* WPA_AUTH_I_H */
 --- a/src/ap/hostapd.c
 +++ b/src/ap/hostapd.c
-@@ -1620,8 +1620,18 @@
+@@ -3085,8 +3085,18 @@ setup_mld:
  			hapd->iconf->ieee80211ax;
  
  #ifdef CONFIG_IEEE80211R_AP
@@ -140,7 +140,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  #ifdef CONFIG_MESH
 --- a/src/ap/wpa_auth_ft.c
 +++ b/src/ap/wpa_auth_ft.c
-@@ -2137,16 +2137,19 @@
+@@ -2137,16 +2137,19 @@ int wpa_auth_derive_ptk_ft(struct wpa_st
  		return -1;
  	}
  
@@ -163,7 +163,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  				 ptk, ptk_name, sm->wpa_key_mgmt, sm->pairwise,
  				 kdk_len);
  }
-@@ -2199,6 +2202,238 @@
+@@ -2199,6 +2202,238 @@ static inline int wpa_auth_get_seqnum(st
  }
  
  
@@ -402,7 +402,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  static u8 * wpa_ft_gtk_subelem(struct wpa_state_machine *sm, size_t *len,
  			       bool reassoc, int vlan_id)
  {
-@@ -2536,6 +2771,9 @@
+@@ -2536,6 +2771,9 @@ u8 * wpa_sm_write_assoc_resp_ies(struct
  	const u8 *kck;
  	size_t kck_len;
  	size_t key_len;
@@ -412,7 +412,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  
  	if (sm == NULL)
  		return pos;
-@@ -2610,8 +2848,14 @@
+@@ -2610,8 +2848,14 @@ u8 * wpa_sm_write_assoc_resp_ies(struct
  
  	/* Fast BSS Transition Information */
  	if (auth_alg == WLAN_AUTH_FT) {
@@ -429,7 +429,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  		if (!subelem) {
  			wpa_printf(MSG_DEBUG,
  				   "FT: Failed to add GTK subelement");
-@@ -2621,7 +2865,7 @@
+@@ -2621,7 +2865,7 @@ u8 * wpa_sm_write_assoc_resp_ies(struct
  		r0kh_id_len = sm->r0kh_id_len;
  		anonce = sm->ANonce;
  		snonce = sm->SNonce;
@@ -438,7 +438,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  			u8 *igtk;
  			size_t igtk_len;
  			u8 *nbuf;
-@@ -2643,7 +2887,8 @@
+@@ -2643,7 +2887,8 @@ u8 * wpa_sm_write_assoc_resp_ies(struct
  			subelem_len += igtk_len;
  			os_free(igtk);
  		}
@@ -448,7 +448,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  			u8 *bigtk;
  			size_t bigtk_len;
  			u8 *nbuf;
-@@ -2764,8 +3009,12 @@
+@@ -2764,8 +3009,12 @@ u8 * wpa_sm_write_assoc_resp_ies(struct
  		fte_mic = _ftie->mic;
  		elem_count = &_ftie->mic_control[1];
  	}
@@ -463,7 +463,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  
  	ric_start = pos;
  	if (wpa_ft_parse_ies(req_ies, req_ies_len, &parse,
-@@ -2800,9 +3049,40 @@
+@@ -2800,9 +3049,40 @@ u8 * wpa_sm_write_assoc_resp_ies(struct
  		rsnxe_len = sm->wpa_auth->conf.rsnxe_override_ft_len;
  	}
  #endif /* CONFIG_TESTING_OPTIONS */
@@ -505,7 +505,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  	if (wpa_key_mgmt_fils(sm->wpa_key_mgmt)) {
  		kck = sm->PTK.kck2;
  		kck_len = sm->PTK.kck2_len;
-@@ -2812,12 +3092,12 @@
+@@ -2812,12 +3092,12 @@ u8 * wpa_sm_write_assoc_resp_ies(struct
  	}
  	if (auth_alg == WLAN_AUTH_FT &&
  	    wpa_ft_mic(sm->wpa_key_mgmt, kck, kck_len,
@@ -522,7 +522,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  		       fte_mic) < 0) {
  		wpa_printf(MSG_DEBUG, "FT: Failed to calculate MIC");
  		pos = NULL;
-@@ -2833,6 +3113,9 @@
+@@ -2833,6 +3113,9 @@ u8 * wpa_sm_write_assoc_resp_ies(struct
  	os_memcpy(sm->assoc_resp_ftie, ftie, ftie_len);
  
  fail:
@@ -532,7 +532,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  	wpa_ft_parse_ies_free(&parse);
  	return pos;
  }
-@@ -2961,11 +3244,12 @@
+@@ -2961,11 +3244,12 @@ static int wpa_ft_psk_pmk_r1(struct wpa_
  			break;
  
  		if (wpa_derive_pmk_r0(pmk, PMK_LEN, ssid, ssid_len, mdid, r0kh,
@@ -547,7 +547,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  		    os_memcmp_const(pmk_r1_name, req_pmk_r1_name,
  				    WPA_PMK_NAME_LEN) != 0)
  			continue;
-@@ -3086,7 +3370,8 @@
+@@ -3086,7 +3370,8 @@ static int wpa_ft_local_derive_pmk_r1(st
  
  	if (wpa_derive_pmk_r1(r0->pmk_r0, r0->pmk_r0_len, r0->pmk_r0_name,
  			      conf->r1_key_holder,
@@ -557,7 +557,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  		return -1;
  
  	os_get_reltime(&now);
-@@ -3204,7 +3489,8 @@
+@@ -3204,7 +3489,8 @@ static int wpa_ft_process_auth_req(struc
  	    wpa_key_mgmt_ft_psk(sm->wpa_key_mgmt)) {
  		if (wpa_derive_pmk_r1_name(parse.rsn_pmkid,
  					   sm->wpa_auth->conf.r1_key_holder,
@@ -567,7 +567,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  			goto out;
  		if (wpa_ft_psk_pmk_r1(sm, pmk_r1_name, pmk_r1, &pairwise,
  				      &vlan, &identity, &identity_len,
-@@ -3231,7 +3517,8 @@
+@@ -3231,7 +3517,8 @@ static int wpa_ft_process_auth_req(struc
  			continue;
  		if (wpa_derive_pmk_r1_name(parse.rsn_pmkid,
  					   sm->wpa_auth->conf.r1_key_holder,
@@ -577,7 +577,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  			continue;
  
  		if (wpa_ft_fetch_pmk_r1(sm->wpa_auth, sm->addr, pmk_r1_name,
-@@ -3338,8 +3625,10 @@
+@@ -3351,8 +3638,10 @@ pmk_r1_derived:
  	else
  		kdk_len = 0;
  
@@ -589,7 +589,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  			      &sm->PTK, ptk_name, parse.key_mgmt,
  			      pairwise, kdk_len) < 0)
  		goto out;
-@@ -3466,6 +3755,7 @@
+@@ -3479,6 +3768,7 @@ int wpa_ft_validate_reassoc(struct wpa_s
  	const u8 *kck;
  	size_t kck_len;
  	struct wpa_auth_config *conf;
@@ -597,7 +597,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  	int retval = WLAN_STATUS_UNSPECIFIED_FAILURE;
  
  	if (sm == NULL)
-@@ -3613,15 +3903,26 @@
+@@ -3626,15 +3916,26 @@ int wpa_ft_validate_reassoc(struct wpa_s
  		kck = sm->PTK.kck;
  		kck_len = sm->PTK.kck_len;
  	}
@@ -626,7 +626,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  		       mic) < 0) {
  		wpa_printf(MSG_DEBUG, "FT: Failed to calculate MIC");
  		goto out;
-@@ -3629,8 +3930,11 @@
+@@ -3642,8 +3943,11 @@ int wpa_ft_validate_reassoc(struct wpa_s
  
  	if (os_memcmp_const(mic, parse.fte_mic, mic_len) != 0) {
  		wpa_printf(MSG_DEBUG, "FT: Invalid MIC in FTIE");
@@ -640,7 +640,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
  		wpa_hexdump(MSG_MSGDUMP, "FT: Received MIC",
  			    parse.fte_mic, mic_len);
  		wpa_hexdump(MSG_MSGDUMP, "FT: Calculated MIC", mic, mic_len);
-@@ -3698,6 +4002,7 @@
+@@ -3711,6 +4015,7 @@ int wpa_ft_validate_reassoc(struct wpa_s
  
  	retval = WLAN_STATUS_SUCCESS;
  out:
