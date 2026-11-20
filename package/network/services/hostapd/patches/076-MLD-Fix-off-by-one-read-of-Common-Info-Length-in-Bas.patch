@@ -1,0 +1,53 @@
+From 2569d7f46c253620cc288b9c68953558d89db6b2 Mon Sep 17 00:00:00 2001
+From: Louis Kotze <loukot@gmail.com>
+Date: Mon, 24 Aug 2026 09:31:45 +0200
+Subject: [PATCH] MLD: Fix off-by-one read of Common Info Length in Basic MLE accessors
+
+get_basic_mle_eml_capa() and get_basic_mle_link_id() rejected buffers
+shorter than MULTI_LINK_CONTROL_LEN (2) and then read
+buf[MULTI_LINK_CONTROL_LEN] to get the Common Info Length field. A
+two-octet buffer therefore passed the check and the following read went
+one octet past the end.
+
+The Common Info Length field follows the Multi-Link Control field, so
+three octets are needed before it can be read. get_basic_mle_mld_addr()
+in the same file already accounts for this.
+
+This is reachable while processing scan results:
+mlo_scan_est_throughput() takes the element length from a Beacon or
+Probe Response frame, skips the element header, and passes the remainder
+to both accessors. An AP that advertises a Basic Multi-Link element with
+an element length of 3 leaves exactly two octets and triggers the read
+before any authentication or association takes place.
+
+Found with a new fuzzer for Multi-Link element parsing.
+
+Fixes: b6ffe3149321 ("Add helper functions for parsing Basic MLE to fetch EML capa and Link ID")
+Signed-off-by: Louis Kotze <loukot@gmail.com>
+(cherry picked from commit 2569d7f46c253620cc288b9c68953558d89db6b2)
+---
+ src/common/ieee802_11_common.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+--- a/src/common/ieee802_11_common.c
++++ b/src/common/ieee802_11_common.c
+@@ -3694,7 +3694,8 @@ const u8 * get_basic_mle_eml_capa(const
+ 	size_t common_info_limit;
+ 	u8 common_info_len;
+ 
+-	if (len < MULTI_LINK_CONTROL_LEN)
++	/* The Common Info Length field follows the Multi-Link Control field */
++	if (len < MULTI_LINK_CONTROL_LEN + 1)
+ 		return NULL;
+ 
+ 	ctrl = le_to_host16(ml->ml_control);
+@@ -3739,7 +3740,8 @@ int get_basic_mle_link_id(const u8 *buf,
+ 	u8 common_info_len;
+ 	u8 link_id;
+ 
+-	if (len < MULTI_LINK_CONTROL_LEN)
++	/* The Common Info Length field follows the Multi-Link Control field */
++	if (len < MULTI_LINK_CONTROL_LEN + 1)
+ 		return -1;
+ 
+ 	ctrl = le_to_host16(ml->ml_control);
