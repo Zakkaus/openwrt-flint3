@@ -90,14 +90,6 @@
 	status = "okay";
 };
 
-&cryptobam {
-	status = "okay";
-};
-
-&crypto {
-	status = "okay";
-};
-
 &qpic_bam {
 	status = "okay";
 };
@@ -238,6 +230,6 @@
 };
 
 &wifi {
-	qcom,ath11k-calibration-variant = "Spectrum-SAX1V1K";
+	qcom,calibration-variant = "Spectrum-SAX1V1K";
 	status = "okay";
 };

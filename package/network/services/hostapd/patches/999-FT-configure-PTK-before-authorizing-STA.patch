@@ -17,7 +17,7 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
 ---
 --- a/src/ap/ieee802_11.c
 +++ b/src/ap/ieee802_11.c
-@@ -8563,6 +8563,21 @@
+@@ -9302,6 +9302,21 @@ skip_update:
  			goto handle_ml;
  	}
  
@@ -38,8 +38,8 @@ Signed-off-by: Kamil Bienkiewicz <perceivalpercy@gmail.com>
 +
  	hostapd_set_sta_flags(hapd, sta);
  
- 	if (!(sta->flags & WLAN_STA_WDS) && sta->pending_wds_enable) {
-@@ -8591,9 +8606,7 @@
+ #ifdef CONFIG_IEEE80211BE
+@@ -9336,9 +9351,7 @@ skip_update:
  			hostapd_set_wds_encryption(hapd, sta, ifname_wds);
  	}
  
