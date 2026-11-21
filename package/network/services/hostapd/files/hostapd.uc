@@ -301,6 +301,11 @@ function iface_supplicant_start(phydev)
 const PHY_WAIT_MS = 100;
 const PHY_WAIT_MAX = 300;
 
+// A firmware crash fails every interface add until the driver recovers it,
+// ~15 s on ath12k, and nothing else sets the phy up again afterwards.
+const ADD_RETRY_MS = 5000;
+const ADD_RETRY_MAX = 6;
+
 function phy_busy(phy, self)
 {
 	for (let name, config in hostapd.data.config) {
@@ -336,6 +341,24 @@ function iface_pending_phy_wait(pending)
 
 	pending.wait(PHY_WAIT_MS);
 	return true;
+}
+
+function iface_pending_retry(pending)
+{
+	if (pending.add_retry >= ADD_RETRY_MAX) {
+		hostapd.printf(`Giving up on the interface add for phy ${pending.phy} after ${ADD_RETRY_MAX} retries`);
+		return false;
+	}
+
+	pending.add_retry++;
+	hostapd.printf(`Retrying the interface add for phy ${pending.phy} in ${ADD_RETRY_MS / 1000} s`);
+	return true;
+}
+
+function iface_pending_retry_done(pending)
+{
+	if (pending.add_retry)
+		hostapd.printf(`Interface add for phy ${pending.phy} succeeded on retry ${pending.add_retry}`);
 }
 
 function __iface_pending_next(pending, state, ret, data)
@@ -381,8 +404,10 @@ function __iface_pending_next(pending, state, ret, data)
 	case "check_phy":
 		let phy_status = data;
 		if (phy_status && phy_status.state == "COMPLETED") {
-			if (iface_add(phy, config, phy_status))
+			if (iface_add(phy, config, phy_status)) {
+				iface_pending_retry_done(pending);
 				return "done";
+			}
 
 			hostapd.printf(`Failed to bring up phy ${phy} ifname=${bss.ifname} with supplicant provided frequency`);
 		}
@@ -396,14 +421,30 @@ function __iface_pending_next(pending, state, ret, data)
 		if (iface_pending_phy_wait(pending))
 			return "wpas_stopped";
 
-		if (!iface_add(phy, config))
+		let added = iface_add(phy, config);
+		if (added)
+			iface_pending_retry_done(pending);
+		else
 			hostapd.printf(`hostapd.add_iface failed for phy ${phy} ifname=${bss.ifname}`);
 		pending.call("wpa_supplicant", "phy_set_state", {
 			phy: phydev.phy,
 			radio: phydev.radio ?? -1,
 			stop: false
 		});
-		return null;
+		if (added || !iface_pending_retry(pending))
+			return null;
+
+		return "retry_wait";
+	case "retry_wait":
+		// The pending setup stays, so a new config or a removal of the
+		// phy aborts it with the timer
+		pending.wait(ADD_RETRY_MS);
+		return "retry";
+	case "retry":
+		hostapd.printf(`Retrying the interface add for phy ${phy} ifname=${bss.ifname} (${pending.add_retry}/${ADD_RETRY_MAX})`);
+		hostapd.remove_iface(phy);
+		pending.phy_wait = 0;
+		return "init";
 	case "done":
 	default:
 		delete hostapd.data.pending_config[phy];
@@ -479,6 +520,7 @@ function iface_pending_init(phydev, config)
 	let pending = proto({
 		next_state: "init",
 		phy_wait: 0,
+		add_retry: 0,
 		phydev: phydev,
 		phy: phy,
 		config: config,
