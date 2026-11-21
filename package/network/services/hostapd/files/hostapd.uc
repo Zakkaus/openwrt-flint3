@@ -343,6 +343,91 @@ function iface_pending_phy_wait(pending)
 	return true;
 }
 
+// Creates the netdev of an AP MLD unless it exists. The creation can fail
+// for a while, e.g. during a firmware recovery, so a failure keeps the BSS in
+// the config and the pending setup retries it.
+function mld_wdev_create(phydev, mld_name, mld_data)
+{
+	if (!access('/sys/class/net/' + mld_name, 'x'))
+		mld_data.has_wdev = false;
+
+	if (mld_data.has_wdev)
+		return true;
+
+	hostapd.printf(`Create MLD interface ${mld_name} on phy ${phydev.name}, radio mask: ${mld_data.radio_mask}`);
+	let err = phydev.wdev_add(mld_name, {
+		mode: "ap",
+		macaddr: mld_data.macaddr,
+		radio_mask: mld_data.radio_mask,
+	});
+	if (err) {
+		hostapd.printf(`Failed to create MLD ${mld_name} on phy ${phydev.name}: ${err}`);
+		return false;
+	}
+
+	err = wdev_set_up(mld_name, true);
+	if (err) {
+		hostapd.printf(`Failed to bring up MLD ${mld_name} on phy ${phydev.name}: ${err}`);
+		wdev_remove(mld_name);
+		return false;
+	}
+
+	mld_data.has_wdev = true;
+
+	return true;
+}
+
+// The first MLD BSS of the config whose netdev does not run
+function config_mld_missing(config)
+{
+	for (let bss in config.bss)
+		if (bss.mld_ap && !hostapd.data.mld[bss.ifname]?.has_wdev)
+			return bss.ifname;
+
+	return null;
+}
+
+function iface_pending_mld(pending)
+{
+	if (!config_mld_missing(pending.config))
+		return true;
+
+	let phydev = phy_open(pending.phydev.phy);
+	if (!phydev)
+		return false;
+
+	for (let bss in pending.config.bss) {
+		if (!bss.mld_ap)
+			continue;
+
+		let mld_data = hostapd.data.mld[bss.ifname];
+		if (!mld_data || !mld_wdev_create(phydev, bss.ifname, mld_data))
+			return false;
+	}
+
+	return true;
+}
+
+// Once the retries are spent, set up the other BSSes without the MLDs whose
+// netdev could not be created
+function iface_pending_mld_drop(pending)
+{
+	let config = pending.config;
+
+	for (let i = 0; i < length(config.bss); i++) {
+		let bss = config.bss[i];
+		if (!bss.mld_ap || hostapd.data.mld[bss.ifname]?.has_wdev)
+			continue;
+
+		hostapd.printf(`Skip MLD interface ${bss.ifname} on phy ${pending.phy}`);
+		if (hostapd.data.mld[bss.ifname])
+			delete hostapd.data.mld[bss.ifname].iface[pending.phy];
+		splice(config.bss, i--, 1);
+	}
+
+	return length(config.bss) > 0;
+}
+
 function iface_pending_retry(pending)
 {
 	if (pending.add_retry >= ADD_RETRY_MAX) {
@@ -378,6 +463,19 @@ function __iface_pending_next(pending, state, ret, data)
 	case "init":
 		return "create_bss";
 	case "create_bss":
+		if (!iface_pending_mld(pending)) {
+			iface_supplicant_start(phydev);
+			if (pending.add_retry < ADD_RETRY_MAX) {
+				iface_pending_retry(pending);
+				return "retry_wait";
+			}
+
+			if (!iface_pending_mld_drop(pending))
+				return null;
+
+			return "create_bss";
+		}
+
 		if (!bss.mld_ap) {
 			let err = phydev.wdev_add(bss.ifname, {
 				mode: "ap",
@@ -1622,33 +1720,9 @@ function bss_check_mld(phydev, iface_name, bss)
 	bss.mld_bssid = mld_data.macaddr;
 	mld_data.iface[iface_name] = true;
 
-	if (!access('/sys/class/net/' + bss.ifname, 'x'))
-		mld_data.has_wdev = false;
-
-	if (mld_data.has_wdev)
-		return true;
-
-	hostapd.printf(`Create MLD interface ${bss.ifname} on phy ${phydev.name}, radio mask: ${mld_data.radio_mask}`);
-	let err = phydev.wdev_add(bss.ifname, {
-		mode: "ap",
-		macaddr: mld_data.macaddr,
-		radio_mask: mld_data.radio_mask,
-	});
-	if (err) {
-		hostapd.printf(`Failed to create MLD ${bss.ifname} on phy ${phydev.name}: ${err}`);
-		delete mld_data.iface[iface_name];
-		return;
-	}
-
-	err = wdev_set_up(bss.ifname, true);
-	if (err) {
-		hostapd.printf(`Failed to bring up MLD ${bss.ifname} on phy ${phydev.name}: ${err}`);
-		wdev_remove(bss.ifname);
-		delete mld_data.iface[iface_name];
-		return;
-	}
-
-	mld_data.has_wdev = true;
+	// The BSS stays if the netdev cannot be created now: the pending setup
+	// retries it
+	mld_wdev_create(phydev, bss.ifname, mld_data);
 
 	return true;
 }
@@ -1923,18 +1997,25 @@ function iface_set_config(name, config)
 		return 0;
 	}
 
-	try {
-		let ret = iface_reload_config(name, phydev, config, old_config);
-		if (ret) {
-			hostapd.printf(`Reloaded settings for phy ${name}`);
-			return 0;
+	// No link of an AP MLD runs without its netdev, so nothing can be kept
+	// in place, and the restart creates the netdev with its retries
+	let mld_missing = config_mld_missing(config);
+	if (mld_missing) {
+		hostapd.printf(`MLD interface ${mld_missing} is missing on phy ${name}`);
+	} else {
+		try {
+			let ret = iface_reload_config(name, phydev, config, old_config);
+			if (ret) {
+				hostapd.printf(`Reloaded settings for phy ${name}`);
+				return 0;
+			}
+		} catch (e) {
+			hostapd.printf(`Error reloading config: ${e}\n${e.stacktrace[0].context}`);
 		}
-	} catch (e) {
-		hostapd.printf(`Error reloading config: ${e}\n${e.stacktrace[0].context}`);
-	}
 
-	if (iface_link_reload_start(name, phydev, config, old_config))
-		return 0;
+		if (iface_link_reload_start(name, phydev, config, old_config))
+			return 0;
+	}
 
 	hostapd.printf(`Restart interface for phy ${name}`);
 	let ret = iface_restart(phydev, config, old_config);
