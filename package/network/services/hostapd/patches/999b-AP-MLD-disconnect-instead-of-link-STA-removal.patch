@@ -5,25 +5,36 @@ Subject: [PATCH] AP MLD: disconnect instead of link STA removal
 Local patch for ath12k. ath12k returns success for
 NL80211_CMD_REMOVE_LINK_STA but keeps the firmware peer of the link
 station, because the firmware cannot delete one link of an ML peer.
-When hostapd then removes the link (bss.delete() during a reload, or
-the end of an AP Removal Timer), the vdev delete of that link still
-carries those peers, times out, and both Wi-Fi firmwares crash.
+When hostapd then removes the link (bss.delete() during a reload, the
+end of an AP Removal Timer, or an interface removal), the vdev delete of
+that link still carries those peers, times out, and both Wi-Fi firmwares
+crash.
 
 Every non-AP MLD that holds a link which goes now leaves as a whole,
-whichever link it associated on: hostapd sends a Deauthentication
-(reason 3) on its association link and frees the station there, which
-is one NL80211_CMD_DEL_STATION, so the driver deletes the ML peer on
-every link before STOP_AP and REMOVE_LINK run. The entries on the
-other links are freed without a kernel call. hostapd_free_stas() does
-the same, replacing the removal of the partner link stations of a
-non-AP MLD associated on the link and the separate pass of
-hostapd_free_stas_all_links().
+whichever link it associated on: hostapd frees its entries on every
+link without a kernel call each and sends one NL80211_CMD_DEL_STATION
+on its association link, so the driver deletes the ML peer on every
+link before STOP_AP and REMOVE_LINK run. The delete is sent also when
+the driver tears the AP down itself (driver_ap_teardown), since that
+teardown removes only the stopped link from the station.
+
+Only bss.delete() and the AP Removal Timer send a Deauthentication
+(reason 3) for this. hostapd_free_stas() sends no frame, as for its
+other stations, so an interface disable stays silent and the broadcast
+DISASSOCIATE, DEAUTHENTICATE and del_client requests keep their own
+frame. hostapd_free_stas() replaces the removal of the partner link
+stations and the separate pass of hostapd_free_stas_all_links().
 
 The association station is found by the MLD address on the association
 link, not by the AID, which another non-AP MLD can hold after the
-association station went; a link station without one is deleted on its
-own link. AP-STA-DISCONNECTED is reported once per non-AP MLD, from the
-association link, if any of its links was authorized.
+association station went. Entries left without one are swept on every
+link of the AP MLD and deleted once in the kernel, as the earlier
+removal of the association station may have skipped its delete; an
+entry of a newer association of the same address owns the kernel
+station, and then nothing goes to the driver. A session timeout frees
+the non-AP MLD on all its links, so it leaves no such entries.
+AP-STA-DISCONNECTED is reported once per non-AP MLD: ap_free_sta() of
+an association station clears the authorization of its other links.
 
 The AP Removal Timer no longer moves the association of a non-AP MLD
 off the removed link, since the move ends with the same link station
@@ -38,7 +49,7 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
 ---
 --- a/src/ap/hostapd.c
 +++ b/src/ap/hostapd.c
-@@ -935,6 +935,11 @@ static void hostapd_link_remove_finish(v
+@@ -935,6 +935,11 @@ static void hostapd_link_remove_finish(void *eloop_data, void *user_ctx)
  
  	eloop_cancel_timeout(hostapd_link_remove_finish, hapd, NULL);
  
@@ -50,7 +61,7 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
  	hostapd_drv_stop_ap(hapd);
  
  	/* A group addressed Deauthentication would end the association of each
-@@ -1010,70 +1015,13 @@ void hostapd_link_remove_tx_status(struc
+@@ -1010,70 +1015,13 @@ void hostapd_link_remove_tx_status(struct hostapd_data *hapd, const u8 *addr)
  }
  
  
@@ -128,7 +139,7 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
  static void hostapd_link_remove_notify_stas(struct hostapd_data *hapd)
  {
  	struct hostapd_data *tx_hapd;
-@@ -1086,7 +1034,12 @@ static void hostapd_link_remove_notify_s
+@@ -1086,7 +1034,12 @@ static void hostapd_link_remove_notify_stas(struct hostapd_data *hapd)
  
  		/* Stop new data before the frame ends State 3 or 4 (IEEE Std
  		 * 802.11-2024, 11.3.3) */
@@ -142,7 +153,7 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
  			ap_sta_set_authorized(hapd, sta, 0);
  			hostapd_set_sta_flags(hapd, sta);
  		}
-@@ -1136,7 +1089,6 @@ static void hostapd_link_remove_expire_s
+@@ -1136,7 +1089,6 @@ static void hostapd_link_remove_expire_stas(struct hostapd_data *hapd)
  	unsigned int wait_us;
  
  	hostapd_free_link_stas(hapd);
@@ -152,7 +163,7 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
  	if (!hapd->eht_mld_link_removal_tx) {
 --- a/src/ap/sta_info.c
 +++ b/src/ap/sta_info.c
-@@ -290,7 +290,8 @@ static void __ap_free_sta(struct hostapd
+@@ -290,7 +290,8 @@ static void __ap_free_sta(struct hostapd_data *hapd, struct sta_info *sta)
  {
  #ifdef CONFIG_IEEE80211BE
  	if (hostapd_sta_is_link_sta(hapd, sta)) {
@@ -162,18 +173,44 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
  		return;
  	}
  #endif /* CONFIG_IEEE80211BE */
-@@ -760,8 +761,8 @@ void hostapd_free_stas(struct hostapd_da
+@@ -459,6 +460,14 @@ void ap_free_sta(struct hostapd_data *hapd, struct sta_info *sta)
+ 	accounting_sta_stop(hapd, sta);
+ 
+ 	/* just in case */
++#ifdef CONFIG_IEEE80211BE
++	/* Report a non-AP MLD once and leave no authorized entry on its other
++	 * links, which would report it again when they go */
++	if (ap_sta_is_mld(hapd, sta) && hapd->mld &&
++	    !hostapd_sta_is_link_sta(hapd, sta))
++		ap_sta_mld_set_unauthorized(hapd, sta);
++	else
++#endif /* CONFIG_IEEE80211BE */
+ 	ap_sta_set_authorized(hapd, sta, 0);
+ 	hostapd_set_sta_flags(hapd, sta);
+ 
+@@ -639,7 +648,8 @@ void ap_free_sta(struct hostapd_data *hapd, struct sta_info *sta)
+ 		 * VLAN.
+ 		 */
+ 		if (hapd->iface->driver_ap_teardown &&
+-		    !(sta->flags & WLAN_STA_PREAUTH)) {
++		    !(sta->flags & WLAN_STA_PREAUTH) &&
++		    !sta->skip_kernel_delete && !sta->skip_link_sta_remove) {
+ 			hostapd_drv_sta_remove(hapd, sta->addr);
+ 			sta->added_unassoc = 0;
+ 		}
+@@ -760,8 +770,9 @@ void hostapd_free_stas(struct hostapd_data *hapd)
  	struct sta_info *sta, *prev;
  
  #ifdef CONFIG_IEEE80211BE
 -	hostapd_free_mld_partner_stas(hapd);
 -	hostapd_free_link_stas(hapd);
-+	/* A non-AP MLD that holds this link goes on all its links */
-+	hostapd_free_link_mlds(hapd, true);
++	/* A non-AP MLD that holds this link goes on all its links. No frame,
++	 * as for the other stations here. */
++	hostapd_free_link_mlds(hapd, false);
  #endif /* CONFIG_IEEE80211BE */
  
  	sta = hapd->sta_list;
-@@ -819,28 +820,182 @@ void ap_free_link_sta(struct hostapd_dat
+@@ -819,28 +830,246 @@ void ap_free_link_sta(struct hostapd_data *lhapd, struct sta_info *lsta)
  }
  
  
@@ -191,7 +228,11 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
 -	struct sta_info *sta, *prev, *assoc_sta;
 +	struct hostapd_data *other_hapd;
 +	struct sta_info *other_sta;
-+
+ 
+-	sta = hapd->sta_list;
+-	while (sta) {
+-		prev = sta;
+-		sta = sta->next;
 +	if (!hostapd_sta_is_link_sta(hapd, sta)) {
 +		*assoc_hapd = hapd;
 +		return sta;
@@ -205,7 +246,8 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
 +	if (!ap_sta_is_mld(other_hapd, other_sta) ||
 +	    hostapd_sta_is_link_sta(other_hapd, other_sta))
 +		return NULL;
-+
+ 
+-		if (!hostapd_sta_is_link_sta(hapd, prev))
 +	*assoc_hapd = other_hapd;
 +	return other_sta;
 +}
@@ -223,13 +265,8 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
 +
 +	return sta;
 +}
- 
--	sta = hapd->sta_list;
--	while (sta) {
--		prev = sta;
--		sta = sta->next;
- 
--		if (!hostapd_sta_is_link_sta(hapd, prev))
++
++
 +/* Clear the authorization of a non-AP MLD on all its links and report its
 + * disconnection once, from the association link, if any link was authorized.
 + * Returns whether one was. */
@@ -276,12 +313,85 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
 +}
 +
 +
++/* Whether sta and lsta of lhapd are entries of the same association
++ * of a non-AP MLD whose association STA is gone */
++static bool hostapd_mld_same_orphan(struct sta_info *sta,
++				    struct hostapd_data *lhapd,
++				    struct sta_info *lsta)
++{
++	return lsta == sta ||
++		(ap_sta_is_mld(lhapd, lsta) &&
++		 hostapd_sta_is_link_sta(lhapd, lsta) &&
++		 lsta->mld_assoc_link_id == sta->mld_assoc_link_id);
++}
++
++
++/* The association STA of the non-AP MLD of sta is gone, e.g. freed alone, so
++ * entries of the association can remain on any link of the AP MLD. Free them
++ * all and delete the kernel station once: the earlier removal of the
++ * association STA may have skipped its NL80211_CMD_DEL_STATION
++ * (driver_ap_teardown, skip_kernel_delete), and a station left with peers on
++ * the link is what crashes ath12k at the link removal, while a delete of a
++ * station that is already gone only fails. An entry of another association of
++ * the same address owns the kernel station, so then nothing goes to the
++ * driver. */
++static void hostapd_disconnect_orphan_mld(struct hostapd_data *hapd,
++					  struct sta_info *sta, bool deauth)
++{
++	struct hostapd_data *other_hapd;
++	struct sta_info *other_sta;
++	bool authorized = false, other_assoc = false;
++	u8 addr[ETH_ALEN];
++
++	os_memcpy(addr, sta->addr, ETH_ALEN);
++	for_each_mld_link(other_hapd, hapd) {
++		other_sta = ap_get_sta(other_hapd, addr);
++		if (!other_sta)
++			continue;
++		if (!hostapd_mld_same_orphan(sta, other_hapd, other_sta))
++			other_assoc = true;
++		else if (ap_sta_set_authorized_flag(other_hapd, other_sta, 0))
++			authorized = true;
++	}
++
++	wpa_printf(MSG_DEBUG,
++		   "MLD: Disconnect " MACSTR " left on link_id=%u without its association link_id=%u%s",
++		   MAC2STR(addr), hapd->mld_link_id, sta->mld_assoc_link_id,
++		   other_assoc ? ", associated again" : "");
++
++	/* ap_free_sta() of the association STA cleared the authorization on
++	 * every link when it reported the disconnection */
++	if (!other_assoc && authorized)
++		ap_sta_set_authorized_event(hapd, sta, 0);
++	if (!other_assoc && deauth)
++		hostapd_drv_sta_deauth(hapd, addr, WLAN_REASON_DEAUTH_LEAVING);
++
++	for_each_mld_link(other_hapd, hapd) {
++		if (other_hapd == hapd)
++			continue;
++
++		other_sta = ap_get_sta(other_hapd, addr);
++		if (other_sta &&
++		    hostapd_mld_same_orphan(sta, other_hapd, other_sta))
++			hostapd_free_mld_link_sta(other_hapd, other_sta);
++	}
++	hostapd_free_mld_link_sta(hapd, sta);
++
++	if (!other_assoc)
++		hostapd_drv_sta_remove(hapd, addr);
++}
++
++
 +/* ath12k cannot remove one link of a non-AP MLD: it keeps the firmware peer
 + * of the link station that NL80211_CMD_REMOVE_LINK_STA removes, and the vdev
 + * delete of the link then times out and crashes the firmware. End the
 + * association of the non-AP MLD that holds the link of hapd instead, whichever
-+ * link it associated on, so that the driver deletes the whole station, with
-+ * its peers on every link, before the link goes. */
++ * link it associated on, with one NL80211_CMD_DEL_STATION, so that the driver
++ * deletes the whole station, with its peers on every link, before the link
++ * goes. The delete is sent also with driver_ap_teardown: the AP teardown of
++ * the driver would remove only the stopped link from the station, the same
++ * link station removal. The entries on each link are freed without a kernel
++ * call. With deauth, the Deauthentication frame goes out first. */
 +static void hostapd_disconnect_link_mld(struct hostapd_data *hapd,
 +					struct sta_info *sta, bool deauth)
 +{
@@ -289,24 +399,13 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
 +	struct sta_info *assoc_sta, *other_sta;
 +	u8 addr[ETH_ALEN];
 +
-+	os_memcpy(addr, sta->addr, ETH_ALEN);
 +	assoc_sta = hostapd_mld_assoc_sta(hapd, sta, &assoc_hapd);
 +	if (!assoc_sta) {
-+		/* The association STA is gone: delete the station of the
-+		 * non-AP MLD from this link */
-+		wpa_printf(MSG_DEBUG,
-+			   "MLD: Disconnect " MACSTR " left on link_id=%u without its association link_id=%u",
-+			   MAC2STR(addr), hapd->mld_link_id,
-+			   sta->mld_assoc_link_id);
-+		if (deauth)
-+			hostapd_drv_sta_deauth(hapd, addr,
-+					       WLAN_REASON_DEAUTH_LEAVING);
-+		hostapd_free_mld_link_sta(hapd, sta);
-+		if (!hapd->iface->driver_ap_teardown)
-+			hostapd_drv_sta_remove(hapd, addr);
++		hostapd_disconnect_orphan_mld(hapd, sta, deauth);
 +		return;
- 	}
++	}
 +
++	os_memcpy(addr, sta->addr, ETH_ALEN);
 +	wpa_printf(MSG_DEBUG,
 +		   "MLD: Disconnect " MACSTR " from link_id=%u, association link_id=%u",
 +		   MAC2STR(addr), hapd->mld_link_id, assoc_hapd->mld_link_id);
@@ -317,8 +416,8 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
 +
 +	/* The station on the association link goes last, as in
 +	 * ap_free_sta_all_links(): its ap_free_sta() frees the state machine
-+	 * that the other links share, and its NL80211_CMD_DEL_STATION removes
-+	 * the other links with it. */
++	 * that the other links share. The kernel station goes before it, as
++	 * __ap_free_sta() would delete it, ahead of a VLAN removal. */
 +	if (sta != assoc_sta)
 +		hostapd_free_mld_link_sta(hapd, sta);
 +	for_each_mld_link(other_hapd, assoc_hapd) {
@@ -328,7 +427,9 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
 +		other_sta = hostapd_mld_partner_sta(other_hapd, assoc_sta);
 +		if (other_sta)
 +			hostapd_free_mld_link_sta(other_hapd, other_sta);
-+	}
+ 	}
++	hostapd_drv_sta_remove(assoc_hapd, addr);
++	assoc_sta->skip_kernel_delete = 1;
 +	ap_free_sta(assoc_hapd, assoc_sta);
 +}
 +
@@ -364,15 +465,30 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
 +}
 +
 +
-+/* Every non-AP MLD that holds the link. Without deauth, the caller has sent
-+ * the Deauthentication frames. */
++/* Every non-AP MLD that holds the link. Without deauth, no frame goes out:
++ * the caller sent its own, or sends none. */
 +void hostapd_free_link_mlds(struct hostapd_data *hapd, bool deauth)
 +{
 +	hostapd_disconnect_link_mlds(hapd, false, deauth);
  }
  #endif /* CONFIG_IEEE80211BE */
  
-@@ -2474,44 +2629,12 @@ static void ap_sta_remove_link_sta(struc
+@@ -1070,6 +1299,14 @@ static void ap_handle_session_timer(void *eloop_ctx, void *timeout_ctx)
+ 		       "session timeout");
+ 	sta->acct_terminate_cause =
+ 		RADIUS_ACCT_TERMINATE_CAUSE_SESSION_TIMEOUT;
++#ifdef CONFIG_IEEE80211BE
++	/* Free the entries of a non-AP MLD on its other links with it, so that
++	 * none is left without its association STA */
++	if (ap_sta_is_mld(hapd, sta) && hapd->mld) {
++		hostapd_disconnect_link_mld(hapd, sta, false);
++		return;
++	}
++#endif /* CONFIG_IEEE80211BE */
+ 	ap_free_sta(hapd, sta);
+ }
+ 
+@@ -2474,44 +2711,12 @@ static void ap_sta_remove_link_sta(struct hostapd_data *hapd,
  		}
  	}
  }
@@ -430,7 +546,7 @@ Signed-off-by: Zakk <zakk@gentoozh.org>
  
  	u16 max_idle_period; /* if nonzero, the granted BSS max idle period in
  			      * units of 1000 TUs */
-@@ -538,8 +541,9 @@ void ap_sta_mld_info_copy(struct mld_inf
+@@ -538,8 +541,9 @@ void ap_sta_mld_info_copy(struct mld_info *dst, const struct mld_info *src);
  
  void ap_free_link_sta(struct hostapd_data *lhapd, struct sta_info *lsta);
  void hostapd_free_link_stas(struct hostapd_data *hapd);
