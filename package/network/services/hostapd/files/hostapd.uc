@@ -387,7 +387,10 @@ function __iface_pending_next(pending, state, ret, data)
 			if (err) {
 				hostapd.printf(`Failed to create ${bss.ifname} on phy ${phy}: ${err}`);
 				iface_supplicant_start(phydev);
-				return null;
+				if (!iface_pending_retry(pending))
+					return null;
+
+				return "retry_wait";
 			}
 		}
 
@@ -441,7 +444,15 @@ function __iface_pending_next(pending, state, ret, data)
 		pending.wait(ADD_RETRY_MS);
 		return "retry";
 	case "retry":
+		// The wiphy can go away, or come back with another index
+		let cur_phydev = phy_open(phydev.phy, phydev.radio);
+		if (!cur_phydev) {
+			hostapd.printf(`Giving up on the interface add for phy ${phy}: the phy is gone`);
+			return null;
+		}
+
 		hostapd.printf(`Retrying the interface add for phy ${phy} ifname=${bss.ifname} (${pending.add_retry}/${ADD_RETRY_MAX})`);
+		pending.phydev = cur_phydev;
 		hostapd.remove_iface(phy);
 		pending.phy_wait = 0;
 		return "init";
@@ -1670,7 +1681,7 @@ function iface_check_mld(phydev, name, config)
 	}
 }
 
-function iface_config_remove(name, old_config)
+function iface_pending_cancel(name)
 {
 	let pending = hostapd.data.pending_config[name];
 
@@ -1679,6 +1690,11 @@ function iface_config_remove(name, old_config)
 		pending.abort();
 		iface_supplicant_start(pending.phydev);
 	}
+}
+
+function iface_config_remove(name, old_config)
+{
+	iface_pending_cancel(name);
 
 	delete hostapd.data.apsta_freq[name];
 	delete hostapd.data.apsta_stopped[name];
@@ -1888,6 +1904,8 @@ function iface_set_config(name, config)
 	let phydev = phy_open(phy, config.radio_idx);
 	if (!phydev) {
 		hostapd.printf(`Failed to open phy ${phy}`);
+		// A retry of the old config must not bring it back
+		iface_pending_cancel(name);
 		return false;
 	}
 
