@@ -463,9 +463,10 @@ uc_hostapd_bss_delete(uc_vm_t *vm, size_t nargs)
 	hapd->interface_added = 1;
 
 #ifdef CONFIG_IEEE80211BE
-	/* The link STOP_AP flushes every station that holds the link */
+	/* Before the link STOP_AP flushes them: every non-AP MLD that holds
+	 * the link leaves on all its links, whichever is its association link */
 	if (hapd->conf->mld_ap)
-		hostapd_free_link_stas(hapd);
+		hostapd_free_link_mlds(hapd, true);
 #endif /* CONFIG_IEEE80211BE */
 
 	hostapd_drv_stop_ap(hapd);
